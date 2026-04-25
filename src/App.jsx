@@ -3,6 +3,7 @@ import { useLocalStorage } from './hooks/useLocalStorage'
 import TabBar from './components/TabBar'
 import Editor from './components/Editor'
 import Preview from './components/Preview'
+import { SAMPLES } from './data/samples'
 
 const DEFAULT_CODE = `flowchart TD
     A[Start] --> B{Is it working?}
@@ -17,14 +18,12 @@ function makeTab(name) {
 const INITIAL_TABS = [makeTab('Diagram 1')]
 
 function encodeState(tabs, activeTabId) {
-  const json = JSON.stringify({ tabs, activeTabId })
-  return btoa(unescape(encodeURIComponent(json)))
+  return btoa(unescape(encodeURIComponent(JSON.stringify({ tabs, activeTabId }))))
 }
 
 function decodeHash(hash) {
   try {
-    const json = decodeURIComponent(escape(atob(hash)))
-    const data = JSON.parse(json)
+    const data = JSON.parse(decodeURIComponent(escape(atob(hash))))
     if (Array.isArray(data.tabs) && data.tabs.length) return data
   } catch {}
   return null
@@ -34,16 +33,21 @@ export default function App() {
   const [tabs, setTabs] = useLocalStorage('mermaid-tabs', INITIAL_TABS)
   const [activeTabId, setActiveTabId] = useLocalStorage('mermaid-active-tab', INITIAL_TABS[0].id)
   const [pageTitle, setPageTitle] = useLocalStorage('mermaid-page-title', 'Mermaid Viewer')
+  const [uiTheme, setUiTheme] = useLocalStorage('mermaid-ui-theme', 'light')
+  const [diagramConfig, setDiagramConfig] = useLocalStorage('mermaid-diagram-config', { theme: 'default', look: 'classic' })
   const [splitPercent, setSplitPercent] = useState(50)
   const [copied, setCopied] = useState(false)
+  const [errorLine, setErrorLine] = useState(null)
   const isDragging = useRef(false)
   const workspaceRef = useRef(null)
+  const actionsRef = useRef({})
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0]
 
   useEffect(() => { document.title = pageTitle }, [pageTitle])
+  useEffect(() => { document.documentElement.setAttribute('data-theme', uiTheme) }, [uiTheme])
 
-  // Load shared state from URL hash on first visit
+  // Load shared state from URL hash
   useEffect(() => {
     const hash = window.location.hash.slice(1)
     if (!hash) return
@@ -88,38 +92,99 @@ export default function App() {
     })
   }
 
-  function onDragStart(e) {
-    isDragging.current = true
-    e.preventDefault()
+  // Keep actionsRef current so keyboard handler doesn't need re-registration
+  actionsRef.current = {
+    addTab,
+    removeActiveTab: () => tabs.length > 1 && removeTab(activeTab.id),
   }
+
+  useEffect(() => {
+    function onKeyDown(e) {
+      const mod = e.metaKey || e.ctrlKey
+      if (!mod) return
+      if (e.key === 't') { e.preventDefault(); actionsRef.current.addTab() }
+      if (e.key === 'w' && e.shiftKey) { e.preventDefault(); actionsRef.current.removeActiveTab() }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  function onDragStart(e) { isDragging.current = true; e.preventDefault() }
 
   function onMouseMove(e) {
     if (!isDragging.current || !workspaceRef.current) return
     const rect = workspaceRef.current.getBoundingClientRect()
-    const pct = ((e.clientX - rect.left) / rect.width) * 100
-    setSplitPercent(Math.min(80, Math.max(20, pct)))
+    setSplitPercent(Math.min(80, Math.max(20, ((e.clientX - rect.left) / rect.width) * 100)))
   }
 
-  function onMouseUp() {
-    isDragging.current = false
+  function onMouseUp() { isDragging.current = false }
+
+  function updateDiagramConfig(key, value) {
+    setDiagramConfig((prev) => ({ ...prev, [key]: value }))
   }
 
   return (
-    <div
-      className="app"
-      onMouseMove={onMouseMove}
-      onMouseUp={onMouseUp}
-      onMouseLeave={onMouseUp}
-    >
+    <div className="app" onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}>
       <header className="app-header">
         <span className="app-logo">⬡</span>
         <EditableTitle value={pageTitle} onChange={setPageTitle} />
         <div className="header-actions">
+          <button
+            className="icon-btn"
+            onClick={() => setUiTheme((t) => t === 'light' ? 'dark' : 'light')}
+            title={uiTheme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+          >
+            {uiTheme === 'light' ? '🌙' : '☀️'}
+          </button>
           <button className="share-btn" onClick={share}>
             {copied ? '✓ Copied!' : 'Share'}
           </button>
         </div>
       </header>
+
+      <div className="options-bar">
+        <label className="options-label">Theme</label>
+        <select
+          className="options-select"
+          value={diagramConfig.theme}
+          onChange={(e) => updateDiagramConfig('theme', e.target.value)}
+        >
+          <option value="default">Default</option>
+          <option value="dark">Dark</option>
+          <option value="forest">Forest</option>
+          <option value="neutral">Neutral</option>
+          <option value="base">Base</option>
+        </select>
+
+        <label className="options-label">Look</label>
+        <select
+          className="options-select"
+          value={diagramConfig.look}
+          onChange={(e) => updateDiagramConfig('look', e.target.value)}
+        >
+          <option value="classic">Classic</option>
+          <option value="handDrawn">Hand Drawn</option>
+        </select>
+
+        <div className="options-sep" />
+
+        <label className="options-label">Sample</label>
+        <select
+          className="options-select"
+          value=""
+          onChange={(e) => { if (e.target.value) { updateCode(e.target.value); e.target.value = '' } }}
+        >
+          <option value="">Load example…</option>
+          {SAMPLES.map((s) => (
+            <option key={s.label} value={s.code}>{s.label}</option>
+          ))}
+        </select>
+
+        <div className="options-hint">
+          <kbd>⌘T</kbd> new tab &nbsp;·&nbsp; <kbd>⌘⇧W</kbd> close tab
+        </div>
+      </div>
+
       <TabBar
         tabs={tabs}
         activeTabId={activeTab.id}
@@ -128,13 +193,28 @@ export default function App() {
         onRemove={removeTab}
         onRename={renameTab}
       />
+
       <div className="workspace" ref={workspaceRef}>
         <div className="pane-wrapper" style={{ width: `${splitPercent}%` }}>
-          <Editor key={activeTab.id} code={activeTab.code} onChange={updateCode} />
+          <Editor
+            key={activeTab.id}
+            code={activeTab.code}
+            onChange={updateCode}
+            errorLine={errorLine}
+            darkMode={uiTheme === 'dark'}
+          />
         </div>
         <div className="resize-handle" onMouseDown={onDragStart} />
         <div className="pane-wrapper" style={{ width: `${100 - splitPercent}%` }}>
-          <Preview key={activeTab.id + '-preview'} code={activeTab.code} tabId={activeTab.id} />
+          <Preview
+            key={activeTab.id + '-preview'}
+            code={activeTab.code}
+            tabId={activeTab.id}
+            tabName={activeTab.name}
+            pageTitle={pageTitle}
+            config={diagramConfig}
+            onError={setErrorLine}
+          />
         </div>
       </div>
     </div>
@@ -147,22 +227,10 @@ function EditableTitle({ value, onChange }) {
   const inputRef = useRef(null)
 
   useEffect(() => {
-    if (editing) {
-      inputRef.current?.focus()
-      inputRef.current?.select()
-    }
+    if (editing) { inputRef.current?.focus(); inputRef.current?.select() }
   }, [editing])
 
-  function startEdit() {
-    setDraft(value)
-    setEditing(true)
-  }
-
-  function commit() {
-    const trimmed = draft.trim()
-    onChange(trimmed || value)
-    setEditing(false)
-  }
+  function commit() { onChange(draft.trim() || value); setEditing(false) }
 
   function onKeyDown(e) {
     if (e.key === 'Enter') commit()
@@ -183,7 +251,7 @@ function EditableTitle({ value, onChange }) {
   }
 
   return (
-    <span className="page-title" onClick={startEdit} title="Click to rename">
+    <span className="page-title" onClick={() => { setDraft(value); setEditing(true) }} title="Click to rename">
       {value}
       <span className="page-title-edit-icon">✎</span>
     </span>

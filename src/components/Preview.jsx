@@ -1,19 +1,24 @@
 import { useEffect, useRef, useState } from 'react'
 import mermaid from 'mermaid'
 
-mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' })
-
 let idCounter = 0
 const ZOOM_STEP = 0.15
 const ZOOM_MIN = 0.2
 const ZOOM_MAX = 4
 
-export default function Preview({ code, tabId }) {
+function parseErrorLine(msg) {
+  const m = msg.match(/line (\d+)/i)
+  return m ? parseInt(m[1], 10) : null
+}
+
+export default function Preview({ code, tabId, tabName, pageTitle, config, onError }) {
   const containerRef = useRef(null)
   const scrollRef = useRef(null)
   const [error, setError] = useState(null)
   const [zoom, setZoom] = useState(1)
+  const [copyLabel, setCopyLabel] = useState('Copy SVG')
 
+  // Wheel zoom + mouse drag
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
@@ -61,9 +66,11 @@ export default function Preview({ code, tabId }) {
     }
   }, [])
 
+  // Render diagram
   useEffect(() => {
     if (!containerRef.current || !code.trim()) {
       setError(null)
+      onError?.(null)
       if (containerRef.current) containerRef.current.innerHTML = ''
       return
     }
@@ -72,34 +79,39 @@ export default function Preview({ code, tabId }) {
     const diagramId = `mermaid-${tabId}-${++idCounter}`
 
     async function render() {
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: config?.theme ?? 'default',
+        look: config?.look ?? 'classic',
+        securityLevel: 'loose',
+      })
+
       try {
         const { svg } = await mermaid.render(diagramId, code)
         if (!cancelled) {
           containerRef.current.innerHTML = svg
           setError(null)
+          onError?.(null)
         }
       } catch (err) {
-        if (!cancelled) setError(err.message || 'Invalid diagram syntax')
+        if (!cancelled) {
+          const msg = err.message || 'Invalid diagram syntax'
+          setError(msg)
+          onError?.(parseErrorLine(msg))
+        }
       }
     }
 
     render()
     return () => { cancelled = true }
-  }, [code, tabId])
+  }, [code, tabId, config?.theme, config?.look])
 
-  function zoomIn() {
-    setZoom((z) => Math.min(ZOOM_MAX, parseFloat((z + ZOOM_STEP).toFixed(2))))
-  }
+  function zoomIn() { setZoom((z) => Math.min(ZOOM_MAX, parseFloat((z + ZOOM_STEP).toFixed(2)))) }
+  function zoomOut() { setZoom((z) => Math.max(ZOOM_MIN, parseFloat((z - ZOOM_STEP).toFixed(2)))) }
 
-  function zoomOut() {
-    setZoom((z) => Math.max(ZOOM_MIN, parseFloat((z - ZOOM_STEP).toFixed(2))))
-  }
+  function getSvgEl() { return containerRef.current?.querySelector('svg') }
 
-  async function exportPng() {
-    const svgEl = containerRef.current?.querySelector('svg')
-    if (!svgEl) return
-
-    // Derive natural pixel dimensions from viewBox or getBoundingClientRect (un-zoomed)
+  function getSvgDimensions(svgEl) {
     const viewBox = svgEl.viewBox?.baseVal
     let w = parseFloat(svgEl.getAttribute('width')) || viewBox?.width || 0
     let h = parseFloat(svgEl.getAttribute('height')) || viewBox?.height || 0
@@ -108,9 +120,34 @@ export default function Preview({ code, tabId }) {
       w = Math.round(rect.width / zoom)
       h = Math.round(rect.height / zoom)
     }
+    return { w, h }
+  }
+
+  async function copySvg() {
+    const svgEl = getSvgEl()
+    if (!svgEl) return
+    await navigator.clipboard.writeText(new XMLSerializer().serializeToString(svgEl))
+    setCopyLabel('Copied!')
+    setTimeout(() => setCopyLabel('Copy SVG'), 2000)
+  }
+
+  async function exportSvg() {
+    const svgEl = getSvgEl()
+    if (!svgEl) return
+    const svgStr = new XMLSerializer().serializeToString(svgEl)
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' }))
+    a.download = `${tabName || 'diagram'}.svg`
+    a.click()
+  }
+
+  async function exportPng() {
+    const svgEl = getSvgEl()
+    if (!svgEl) return
+
+    const { w, h } = getSvgDimensions(svgEl)
     if (!w || !h) return
 
-    // Clone and set explicit dimensions so the browser knows the canvas size
     const clone = svgEl.cloneNode(true)
     clone.setAttribute('width', w)
     clone.setAttribute('height', h)
@@ -118,49 +155,63 @@ export default function Preview({ code, tabId }) {
     clone.style.maxWidth = ''
 
     const svgStr = new XMLSerializer().serializeToString(clone)
-    // Data URL is more reliable than blob URL for SVG→canvas rendering
     const dataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr)
 
     const img = new Image()
     img.onload = () => {
       const scale = 2
+      const label = pageTitle || tabName
+      const titleH = label ? 36 : 0
+      const pad = 20
+
+      const canvasW = Math.max(w, 200)
+      const canvasH = h + titleH + pad * 2
+
       const canvas = document.createElement('canvas')
-      canvas.width = w * scale
-      canvas.height = h * scale
+      canvas.width = canvasW * scale
+      canvas.height = canvasH * scale
       const ctx = canvas.getContext('2d')
       ctx.scale(scale, scale)
+
       ctx.fillStyle = '#ffffff'
-      ctx.fillRect(0, 0, w, h)
-      ctx.drawImage(img, 0, 0, w, h)
+      ctx.fillRect(0, 0, canvasW, canvasH)
+
+      if (label) {
+        ctx.fillStyle = '#1c1c1e'
+        ctx.font = 'bold 14px Inter, system-ui, sans-serif'
+        ctx.textAlign = 'center'
+        ctx.fillText(label, canvasW / 2, titleH / 2 + 5)
+      }
+
+      ctx.drawImage(img, (canvasW - w) / 2, titleH + pad, w, h)
+
       canvas.toBlob((blob) => {
         const a = document.createElement('a')
         a.href = URL.createObjectURL(blob)
-        a.download = 'diagram.png'
+        a.download = `${tabName || 'diagram'}.png`
         a.click()
       })
     }
     img.src = dataUrl
   }
 
+  const disabled = !!error || !code.trim()
+
   return (
     <div className="preview-pane">
       <div className="preview-toolbar">
         <div className="zoom-controls">
           <button className="zoom-btn" onClick={zoomOut} disabled={zoom <= ZOOM_MIN} title="Zoom out">−</button>
-          <button className="zoom-label" onClick={() => setZoom(1)} title="Reset zoom">
-            {Math.round(zoom * 100)}%
-          </button>
+          <button className="zoom-label" onClick={() => setZoom(1)} title="Reset zoom">{Math.round(zoom * 100)}%</button>
           <button className="zoom-btn" onClick={zoomIn} disabled={zoom >= ZOOM_MAX} title="Zoom in">+</button>
         </div>
         <div className="toolbar-sep" />
-        <button className="export-btn" onClick={exportPng} disabled={!!error || !code.trim()}>
-          Export PNG
-        </button>
+        <button className="toolbar-btn" onClick={copySvg} disabled={disabled}>{copyLabel}</button>
+        <button className="toolbar-btn" onClick={exportSvg} disabled={disabled}>SVG ↓</button>
+        <button className="export-btn" onClick={exportPng} disabled={disabled}>PNG ↓</button>
       </div>
       {error ? (
-        <div className="preview-error">
-          <pre>{error}</pre>
-        </div>
+        <div className="preview-error"><pre>{error}</pre></div>
       ) : (
         <div className="preview-scroll" ref={scrollRef}>
           <div className="preview-center">

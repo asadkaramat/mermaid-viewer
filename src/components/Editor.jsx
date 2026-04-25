@@ -1,18 +1,56 @@
+import { useEffect, useRef } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { mermaid } from 'codemirror-lang-mermaid'
 import { oneDark } from '@codemirror/theme-one-dark'
+import { StateEffect, StateField } from '@codemirror/state'
+import { Decoration, EditorView } from '@codemirror/view'
 
-const extensions = [mermaid()]
+const setErrorLine = StateEffect.define()
 
-export default function Editor({ code, onChange }) {
+const errorLineField = StateField.define({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes)
+    for (const e of tr.effects) {
+      if (e.is(setErrorLine)) {
+        if (e.value == null) return Decoration.none
+        try {
+          const line = tr.state.doc.line(e.value)
+          return Decoration.set([Decoration.line({ class: 'cm-error-line' }).range(line.from)])
+        } catch {
+          return Decoration.none
+        }
+      }
+    }
+    return deco
+  },
+  provide: (f) => EditorView.decorations.from(f),
+})
+
+const extensions = [mermaid(), errorLineField]
+
+export default function Editor({ code, onChange, errorLine, darkMode }) {
+  const viewRef = useRef(null)
+
+  useEffect(() => {
+    if (!viewRef.current) return
+    viewRef.current.dispatch({ effects: setErrorLine.of(errorLine ?? null) })
+  }, [errorLine])
+
   return (
     <div className="editor-pane">
       <CodeMirror
         value={code}
         height="100%"
-        theme={oneDark}
+        theme={darkMode ? oneDark : 'light'}
         extensions={extensions}
         onChange={onChange}
+        onCreateEditor={(view) => {
+          viewRef.current = view
+          if (errorLine != null) {
+            view.dispatch({ effects: setErrorLine.of(errorLine) })
+          }
+        }}
         basicSetup={{
           lineNumbers: true,
           foldGutter: false,
