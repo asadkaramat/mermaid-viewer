@@ -29,7 +29,7 @@ const errorLineField = StateField.define({
 
 const extensions = [mermaid(), errorLineField]
 
-export default function Editor({ code, onChange, errorLine, darkMode }) {
+export default function Editor({ code, onChange, errorLine, darkMode, onDropFile }) {
   const viewRef = useRef(null)
 
   useEffect(() => {
@@ -37,8 +37,21 @@ export default function Editor({ code, onChange, errorLine, darkMode }) {
     viewRef.current.dispatch({ effects: setErrorLine.of(errorLine ?? null) })
   }, [errorLine])
 
+  function onDragOver(e) {
+    e.preventDefault()
+  }
+
+  function onDrop(e) {
+    e.preventDefault()
+    const file = [...e.dataTransfer.files].find((f) => /\.(mmd|txt|md)$/i.test(f.name))
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (ev) => onDropFile?.(ev.target.result)
+    reader.readAsText(file)
+  }
+
   return (
-    <div className="editor-pane">
+    <div className="editor-pane" onDragOver={onDragOver} onDrop={onDrop}>
       <CodeMirror
         value={code}
         height="100%"

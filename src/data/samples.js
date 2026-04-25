@@ -92,4 +92,54 @@ export const SAMPLES = [
     merge develop
     commit`,
   },
+  {
+    label: 'Quadrant Chart',
+    code: `quadrantChart
+    title Reach and Engagement
+    x-axis Low Reach --> High Reach
+    y-axis Low Engagement --> High Engagement
+    quadrant-1 Expand
+    quadrant-2 Promote
+    quadrant-3 Re-evaluate
+    quadrant-4 Improve
+    Campaign A: [0.3, 0.6]
+    Campaign B: [0.45, 0.23]
+    Campaign C: [0.57, 0.69]
+    Campaign D: [0.78, 0.34]
+    Campaign E: [0.40, 0.34]`,
+  },
+  {
+    label: 'XY Chart',
+    code: `xychart-beta
+    title "Monthly Revenue"
+    x-axis [Jan, Feb, Mar, Apr, May, Jun]
+    y-axis "Revenue ($K)" 0 --> 100
+    bar [42, 55, 68, 75, 83, 91]
+    line [42, 55, 68, 75, 83, 91]`,
+  },
+  {
+    label: 'Kanban',
+    code: `kanban
+  Todo
+    task1[Write tests]
+    task2[Update docs]
+  In Progress
+    task3[Build feature]
+    task4[Code review]
+  Done
+    task5[Project setup]
+    task6[Define spec]`,
+  },
+  {
+    label: 'User Journey',
+    code: `journey
+    title My working day
+    section Go to work
+      Make tea: 5: Me
+      Go upstairs: 3: Me
+      Do work: 1: Me, Cat
+    section Go home
+      Go downstairs: 5: Me
+      Sit down: 3: Me`,
+  },
 ]
