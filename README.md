@@ -10,6 +10,7 @@ A lightweight, client-side Mermaid diagram viewer with a live code editor. View 
 - **Pan** — click and drag to pan around the diagram
 - **Resizable split** — drag the divider to adjust editor/preview width
 - **Export PNG** — export any diagram as a high-resolution PNG
+- **Shareable URLs** — share all your tabs with anyone via a single link
 - **Persistent** — diagrams are saved to localStorage across sessions
 - **Custom page title** — click the title in the header to rename it
 
@@ -48,6 +49,7 @@ npm run preview
 | Resize split | Drag the divider between editor and preview |
 | Export PNG | Click **Export PNG** in the preview toolbar |
 | Rename page title | Click the title in the header |
+| Share diagrams | Click **Share** — copies a URL with all tabs encoded |
 
 ## Tech Stack
 

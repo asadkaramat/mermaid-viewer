@@ -16,17 +16,43 @@ function makeTab(name) {
 
 const INITIAL_TABS = [makeTab('Diagram 1')]
 
+function encodeState(tabs, activeTabId) {
+  const json = JSON.stringify({ tabs, activeTabId })
+  return btoa(unescape(encodeURIComponent(json)))
+}
+
+function decodeHash(hash) {
+  try {
+    const json = decodeURIComponent(escape(atob(hash)))
+    const data = JSON.parse(json)
+    if (Array.isArray(data.tabs) && data.tabs.length) return data
+  } catch {}
+  return null
+}
+
 export default function App() {
   const [tabs, setTabs] = useLocalStorage('mermaid-tabs', INITIAL_TABS)
   const [activeTabId, setActiveTabId] = useLocalStorage('mermaid-active-tab', INITIAL_TABS[0].id)
   const [pageTitle, setPageTitle] = useLocalStorage('mermaid-page-title', 'Mermaid Viewer')
   const [splitPercent, setSplitPercent] = useState(50)
+  const [copied, setCopied] = useState(false)
   const isDragging = useRef(false)
   const workspaceRef = useRef(null)
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0]
 
   useEffect(() => { document.title = pageTitle }, [pageTitle])
+
+  // Load shared state from URL hash on first visit
+  useEffect(() => {
+    const hash = window.location.hash.slice(1)
+    if (!hash) return
+    const state = decodeHash(hash)
+    if (!state) return
+    setTabs(state.tabs)
+    setActiveTabId(state.activeTabId || state.tabs[0].id)
+    window.history.replaceState(null, '', window.location.pathname)
+  }, [])
 
   const updateCode = useCallback((code) => {
     setTabs((prev) => prev.map((t) => t.id === activeTab.id ? { ...t, code } : t))
@@ -51,6 +77,15 @@ export default function App() {
 
   function renameTab(id, name) {
     setTabs((prev) => prev.map((t) => t.id === id ? { ...t, name } : t))
+  }
+
+  function share() {
+    const encoded = encodeState(tabs, activeTab.id)
+    const url = `${window.location.origin}${window.location.pathname}#${encoded}`
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
   }
 
   function onDragStart(e) {
@@ -79,6 +114,11 @@ export default function App() {
       <header className="app-header">
         <span className="app-logo">⬡</span>
         <EditableTitle value={pageTitle} onChange={setPageTitle} />
+        <div className="header-actions">
+          <button className="share-btn" onClick={share}>
+            {copied ? '✓ Copied!' : 'Share'}
+          </button>
+        </div>
       </header>
       <TabBar
         tabs={tabs}
