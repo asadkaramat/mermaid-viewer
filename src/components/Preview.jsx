@@ -70,6 +70,7 @@ export default function Preview({
   const lastCommitAt = useRef(0)
   const panRef = useRef(pan)
   const stageRef = useRef(null)
+  const intrinsicRef = useRef(null)
   toolRef.current = tool
   codeRef.current = code
   selectedRef.current = selectedId
@@ -84,6 +85,19 @@ export default function Preview({
     setPendingSource(null)
     setEditingNode(null)
   }, [tabId, flowchart])
+
+  // Apply the current zoom by sizing the SVG element directly. This keeps vector
+  // rendering crisp at any zoom (CSS transform scale would rasterize and blur).
+  function applySvgSize() {
+    const svgEl = getSvgEl()
+    const size = intrinsicRef.current
+    if (!svgEl || !size) return
+    svgEl.setAttribute('width', size.w * zoomRef.current)
+    svgEl.setAttribute('height', size.h * zoomRef.current)
+    svgEl.style.maxWidth = 'none'
+  }
+
+  useEffect(() => { applySvgSize() }, [zoom])
 
   function getSvgIntrinsicSize() {
     const svgEl = getSvgEl()
@@ -268,6 +282,15 @@ export default function Preview({
           containerRef.current.innerHTML = svg
           setError(null)
           onError?.(null)
+          // Capture the intrinsic SVG size from viewBox or attrs once per render.
+          const svgEl = getSvgEl()
+          if (svgEl) {
+            const vb = svgEl.viewBox?.baseVal
+            const w = vb?.width || parseFloat(svgEl.getAttribute('width')) || 0
+            const h = vb?.height || parseFloat(svgEl.getAttribute('height')) || 0
+            if (w && h) intrinsicRef.current = { w, h }
+            applySvgSize()
+          }
           if (!hasAutoFitted.current) {
             hasAutoFitted.current = true
             requestAnimationFrame(fitToView)
@@ -445,16 +468,13 @@ export default function Preview({
     if (!nodeEl || !stageEl) return
     const nodeRect = nodeEl.getBoundingClientRect()
     const stageRect = stageEl.getBoundingClientRect()
-    const z = zoomRef.current || 1
-    // Position the input inside the stage, in stage-local (pre-scale) coordinates,
-    // so it transforms with the rest of the canvas content.
     const parsed = parseFlowchart(codeRef.current).nodes.get(id)
     setEditingNode({
       id,
-      x: (nodeRect.left - stageRect.left) / z,
-      y: (nodeRect.top - stageRect.top) / z,
-      w: nodeRect.width / z,
-      h: nodeRect.height / z,
+      x: nodeRect.left - stageRect.left,
+      y: nodeRect.top - stageRect.top,
+      w: nodeRect.width,
+      h: nodeRect.height,
       value: parsed?.label ?? id,
     })
   }
@@ -644,7 +664,7 @@ export default function Preview({
             className="preview-stage"
             ref={stageRef}
             style={{
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transform: `translate(${pan.x}px, ${pan.y}px)`,
               transformOrigin: '0 0',
             }}
           >
