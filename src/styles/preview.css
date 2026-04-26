@@ -114,26 +114,23 @@
   padding: 0;
 }
 
-/* Preview canvas */
+/* Preview canvas — uses transform-based pan/zoom (no native scroll) */
 .preview-scroll {
   flex: 1;
-  overflow: auto;
+  position: relative;
+  overflow: hidden;
   background-color: var(--bg);
   background-image: radial-gradient(circle, var(--dot-color) 1px, transparent 1px);
   background-size: 20px 20px;
-  cursor: grab;
   user-select: none;
 }
 .preview-scroll.is-dragging { cursor: grabbing; }
 
-.preview-center {
-  min-height: 100%;
-  min-width: 100%;
-  width: max-content;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
+.preview-stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
 }
 
 .preview-error {

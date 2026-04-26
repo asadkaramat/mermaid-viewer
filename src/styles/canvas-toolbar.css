@@ -1,0 +1,137 @@
+/* Floating Excalidraw-style toolbar */
+.canvas-toolbar-wrap {
+  position: absolute;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.canvas-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.05);
+  pointer-events: auto;
+}
+
+.tool-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  padding: 0;
+}
+.tool-btn:hover { background: var(--surface2); }
+.tool-btn.active {
+  background: rgba(124, 106, 247, 0.15);
+  color: var(--accent);
+  border-color: rgba(124, 106, 247, 0.35);
+}
+[data-theme="dark"] .tool-btn.active {
+  background: rgba(124, 106, 247, 0.22);
+}
+
+.tool-key {
+  position: absolute;
+  bottom: 2px;
+  right: 4px;
+  font-size: 9px;
+  color: var(--text-muted);
+  font-weight: 500;
+  line-height: 1;
+  pointer-events: none;
+}
+.tool-btn.active .tool-key { color: var(--accent); }
+
+.canvas-hint {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+  white-space: nowrap;
+  max-width: 90vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.canvas-hint:empty { display: none; }
+
+/* The preview pane needs to be a positioning context for the floating toolbar */
+.preview-pane { position: relative; }
+
+/* Inline label edit */
+.node-edit-input {
+  position: absolute;
+  z-index: 10;
+  background: var(--bg);
+  border: 2px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font: inherit;
+  color: var(--text);
+  text-align: center;
+  outline: none;
+  box-shadow: 0 4px 12px rgba(124, 106, 247, 0.3);
+}
+
+/* Selection / pending source / hover highlight on rendered SVG nodes */
+.preview-scroll:not(.tool-cursor-pan) svg g.node:hover :is(rect, circle, ellipse, polygon, path) {
+  stroke: var(--accent) !important;
+  stroke-width: 2px !important;
+}
+.preview-scroll svg g.node.is-selected :is(rect, circle, ellipse, polygon, path) {
+  stroke: var(--accent) !important;
+  stroke-width: 2.5px !important;
+  filter: drop-shadow(0 0 4px rgba(124, 106, 247, 0.5));
+}
+.preview-scroll svg g.node.is-pending-source :is(rect, circle, ellipse, polygon, path) {
+  stroke: #f59e0b !important;
+  stroke-width: 2.5px !important;
+  stroke-dasharray: 6 4 !important;
+}
+
+/* Per-tool cursors over the canvas */
+.preview-scroll.tool-cursor-select { cursor: default; }
+.preview-scroll.tool-cursor-pan { cursor: grab; }
+.preview-scroll.tool-cursor-pan.is-dragging { cursor: grabbing; }
+.preview-scroll.tool-cursor-rect,
+.preview-scroll.tool-cursor-diamond,
+.preview-scroll.tool-cursor-circle,
+.preview-scroll.tool-cursor-round { cursor: crosshair; }
+.preview-scroll.tool-cursor-arrow { cursor: crosshair; }
+.preview-scroll.tool-cursor-text { cursor: text; }
+.preview-scroll.tool-cursor-eraser { cursor: not-allowed; }
+
+/* Make nodes look clickable when an interactive tool is active */
+.preview-scroll:not(.tool-cursor-pan) svg g.node { cursor: pointer; }
+.preview-scroll.tool-cursor-eraser svg g.node:hover :is(rect, circle, ellipse, polygon, path) {
+  stroke: #dc2626 !important;
+  stroke-width: 2.5px !important;
+}
+/* Make edges easier to hit and highlight on hover for eraser */
+.preview-scroll svg path.flowchart-link { stroke-width: 1.5px; }
+.preview-scroll.tool-cursor-eraser svg path.flowchart-link:hover {
+  stroke: #dc2626 !important;
+  stroke-width: 3px !important;
+  cursor: pointer;
+}

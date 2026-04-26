@@ -1,22 +1,51 @@
 import { useEffect, useRef, useState } from 'react'
 import mermaid from 'mermaid'
+import CanvasToolbar from './CanvasToolbar'
+import {
+  isFlowchart, parseFlowchart, addNode, addEdge,
+  deleteNode, deleteEdge, renameLabel, nextNodeId,
+} from '../utils/flowchart'
 
 let idCounter = 0
 const ZOOM_STEP = 0.15
 const ZOOM_MIN = 0.2
-const ZOOM_MAX = 4
+const ZOOM_MAX = 10
+const DRAG_THRESHOLD = 5
 
 function parseErrorLine(msg) {
   const m = msg.match(/line (\d+)/i)
   return m ? parseInt(m[1], 10) : null
 }
 
+// Mermaid renders node g elements with id like
+//   "{diagramId}-flowchart-{originalId}-{vertexCounter}"
+// where diagramId may contain additional hyphens. We strip any leading prefix.
+function nodeIdFromEl(el) {
+  if (!el) return null
+  const raw = el.id || ''
+  const m = raw.match(/(?:^|-)flowchart-(.+)-\d+$/)
+  if (m) return m[1]
+  return el.getAttribute('data-id') || null
+}
+
+// Mermaid edges are path elements with class "flowchart-link" and a data-id like "L_A_B_0".
+// The full id is "{diagramId}-L_{src}_{tgt}_{idx}".
+function edgeIdsFromEl(el) {
+  if (!el) return null
+  const dataId = el.getAttribute?.('data-id')
+  const raw = dataId || el.id || ''
+  const m = raw.match(/(?:^|-)L_(.+?)_(.+?)_\d+$/)
+  if (m) return { source: m[1], target: m[2] }
+  return null
+}
+
 export default function Preview({
-  code, tabId, tabName, pageTitle, config, onError,
+  code, tabId, tabName, pageTitle, config, onError, onCodeChange,
   bgColor, onBgColorChange, presentationMode, onExitPresentation,
 }) {
   const containerRef = useRef(null)
   const scrollRef = useRef(null)
+  const overlayRef = useRef(null)
   const zoomRef = useRef(1)
   const hasAutoFitted = useRef(false)
   const lastPinchDist = useRef(0)
@@ -25,63 +54,143 @@ export default function Preview({
   const [copyLabel, setCopyLabel] = useState('Copy SVG')
   const [copyPngLabel, setCopyPngLabel] = useState('Copy PNG')
 
+  const flowchart = isFlowchart(code)
+  const [tool, setTool] = useState('select')
+  const [selectedId, setSelectedId] = useState(null)
+  const [pendingSource, setPendingSource] = useState(null)
+  const [editingNode, setEditingNode] = useState(null) // { id, x, y, w, h, value }
+  const [hint, setHint] = useState('')
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+
+  const toolRef = useRef(tool)
+  const codeRef = useRef(code)
+  const selectedRef = useRef(selectedId)
+  const pendingSourceRef = useRef(pendingSource)
+  const editingRef = useRef(editingNode)
+  const lastCommitAt = useRef(0)
+  const panRef = useRef(pan)
+  const stageRef = useRef(null)
+  toolRef.current = tool
+  codeRef.current = code
+  selectedRef.current = selectedId
+  pendingSourceRef.current = pendingSource
+  editingRef.current = editingNode
   zoomRef.current = zoom
+  panRef.current = pan
 
-  function fitToView() {
+  // Reset visual editing state when switching tabs / leaving flowchart mode.
+  useEffect(() => {
+    setSelectedId(null)
+    setPendingSource(null)
+    setEditingNode(null)
+  }, [tabId, flowchart])
+
+  function getSvgIntrinsicSize() {
     const svgEl = getSvgEl()
-    const scrollEl = scrollRef.current
-    if (!svgEl || !scrollEl) return
-
+    if (!svgEl) return null
     const viewBox = svgEl.viewBox?.baseVal
-    let w = parseFloat(svgEl.getAttribute('width')) || viewBox?.width || parseFloat(svgEl.style.maxWidth) || 0
+    let w = parseFloat(svgEl.getAttribute('width')) || viewBox?.width || 0
     let h = parseFloat(svgEl.getAttribute('height')) || viewBox?.height || 0
     if (!w || !h) {
       const rect = svgEl.getBoundingClientRect()
-      w = rect.width / zoomRef.current
-      h = rect.height / zoomRef.current
+      const z = zoomRef.current || 1
+      w = rect.width / z
+      h = rect.height / z
     }
-    if (!w || !h) return
+    return w && h ? { w, h } : null
+  }
+
+  function fitToView() {
+    const scrollEl = scrollRef.current
+    const size = getSvgIntrinsicSize()
+    if (!scrollEl || !size) return
 
     const pad = 48
     const fitZoom = Math.min(
-      (scrollEl.clientWidth - pad) / w,
-      (scrollEl.clientHeight - pad) / h,
+      (scrollEl.clientWidth - pad) / size.w,
+      (scrollEl.clientHeight - pad) / size.h,
+      1.5,
     )
-    setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, parseFloat(fitZoom.toFixed(2)))))
+    const newZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, parseFloat(fitZoom.toFixed(2))))
+    const newPan = {
+      x: (scrollEl.clientWidth - size.w * newZoom) / 2,
+      y: (scrollEl.clientHeight - size.h * newZoom) / 2,
+    }
+    setZoom(newZoom)
+    setPan(newPan)
   }
 
+  function resetZoom() {
+    const scrollEl = scrollRef.current
+    const size = getSvgIntrinsicSize()
+    if (!scrollEl || !size) { setZoom(1); return }
+    setZoom(1)
+    setPan({
+      x: (scrollEl.clientWidth - size.w) / 2,
+      y: (scrollEl.clientHeight - size.h) / 2,
+    })
+  }
+
+  // ---------- transform-based pan, wheel zoom, pinch ----------
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
 
     let dragging = false
-    let startX = 0, startY = 0, startScrollLeft = 0, startScrollTop = 0
+    let didDrag = false
+    let startX = 0, startY = 0, startPanX = 0, startPanY = 0
+
+    function shouldPan(e) {
+      const t = toolRef.current
+      if (t === 'pan') return true
+      if (t !== 'select') return false
+      return !e.target.closest('g.node') && !e.target.closest('path.flowchart-link') && !e.target.closest('.node-edit-input')
+    }
+
+    function zoomAt(clientX, clientY, delta) {
+      const rect = el.getBoundingClientRect()
+      const cx = clientX - rect.left
+      const cy = clientY - rect.top
+      const oldZoom = zoomRef.current
+      const newZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, parseFloat((oldZoom + delta).toFixed(2))))
+      if (newZoom === oldZoom) return
+      const k = newZoom / oldZoom
+      const p = panRef.current
+      setPan({ x: cx - (cx - p.x) * k, y: cy - (cy - p.y) * k })
+      setZoom(newZoom)
+    }
 
     function onWheel(e) {
       e.preventDefault()
       const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP
-      setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, parseFloat((z + delta).toFixed(2)))))
+      zoomAt(e.clientX, e.clientY, delta)
     }
 
     function onMouseDown(e) {
       if (e.button !== 0) return
+      didDrag = false
+      if (!shouldPan(e)) return
       dragging = true
       startX = e.clientX
       startY = e.clientY
-      startScrollLeft = el.scrollLeft
-      startScrollTop = el.scrollTop
+      const p = panRef.current
+      startPanX = p.x
+      startPanY = p.y
       el.classList.add('is-dragging')
     }
 
     function onMouseMove(e) {
       if (!dragging) return
-      el.scrollLeft = startScrollLeft - (e.clientX - startX)
-      el.scrollTop = startScrollTop - (e.clientY - startY)
+      const dx = e.clientX - startX
+      const dy = e.clientY - startY
+      if (Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) didDrag = true
+      setPan({ x: startPanX + dx, y: startPanY + dy })
     }
 
     function onMouseUp() {
       dragging = false
       el.classList.remove('is-dragging')
+      el.dataset.didDrag = didDrag ? '1' : '0'
     }
 
     function onTouchStart(e) {
@@ -99,17 +208,19 @@ export default function Preview({
         const dy = e.touches[0].clientY - e.touches[1].clientY
         const dist = Math.sqrt(dx * dx + dy * dy)
         const delta = (dist - lastPinchDist.current) / 200
-        setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, parseFloat((z + delta).toFixed(2)))))
+        const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2
+        const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2
+        zoomAt(cx, cy, delta)
         lastPinchDist.current = dist
       }
     }
 
     function onKeyDown(e) {
       const STEP = 60
-      if (e.key === 'ArrowLeft') { el.scrollLeft -= STEP; e.preventDefault() }
-      else if (e.key === 'ArrowRight') { el.scrollLeft += STEP; e.preventDefault() }
-      else if (e.key === 'ArrowUp') { el.scrollTop -= STEP; e.preventDefault() }
-      else if (e.key === 'ArrowDown') { el.scrollTop += STEP; e.preventDefault() }
+      if (e.key === 'ArrowLeft')  { setPan((p) => ({ ...p, x: p.x + STEP })); e.preventDefault() }
+      else if (e.key === 'ArrowRight') { setPan((p) => ({ ...p, x: p.x - STEP })); e.preventDefault() }
+      else if (e.key === 'ArrowUp')    { setPan((p) => ({ ...p, y: p.y + STEP })); e.preventDefault() }
+      else if (e.key === 'ArrowDown')  { setPan((p) => ({ ...p, y: p.y - STEP })); e.preventDefault() }
     }
 
     el.addEventListener('wheel', onWheel, { passive: false })
@@ -131,6 +242,7 @@ export default function Preview({
     }
   }, [])
 
+  // ---------- mermaid render ----------
   useEffect(() => {
     if (!containerRef.current || !code.trim()) {
       setError(null)
@@ -160,6 +272,8 @@ export default function Preview({
             hasAutoFitted.current = true
             requestAnimationFrame(fitToView)
           }
+          // Re-apply selection / pending highlights on the freshly rendered SVG.
+          requestAnimationFrame(applyHighlights)
         }
       } catch (err) {
         if (!cancelled) {
@@ -174,6 +288,189 @@ export default function Preview({
     return () => { cancelled = true }
   }, [code, tabId, config?.theme, config?.look])
 
+  // ---------- highlight helpers ----------
+  function clearHighlights() {
+    const svg = getSvgEl()
+    if (!svg) return
+    svg.querySelectorAll('g.node.is-selected, g.node.is-pending-source').forEach((n) => {
+      n.classList.remove('is-selected', 'is-pending-source')
+    })
+  }
+
+  function applyHighlights() {
+    const svg = getSvgEl()
+    if (!svg) return
+    clearHighlights()
+    if (selectedRef.current) {
+      const el = findNodeEl(selectedRef.current)
+      el?.classList.add('is-selected')
+    }
+    if (pendingSourceRef.current) {
+      const el = findNodeEl(pendingSourceRef.current)
+      el?.classList.add('is-pending-source')
+    }
+  }
+
+  function findNodeEl(id) {
+    const svg = getSvgEl()
+    if (!svg) return null
+    // The id has variable diagramId prefix, so iterate and match by parsed id.
+    const nodes = svg.querySelectorAll('g.node')
+    for (const n of nodes) if (nodeIdFromEl(n) === id) return n
+    return null
+  }
+
+  useEffect(() => { applyHighlights() }, [selectedId, pendingSource])
+
+  // ---------- click dispatch ----------
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+
+    function onClick(e) {
+      if (el.dataset.didDrag === '1') { el.dataset.didDrag = '0'; return }
+      if (editingRef.current) return // ignore clicks while editing
+      // Swallow the click that closed an inline edit (mousedown blurred the input first).
+      if (Date.now() - lastCommitAt.current < 250) return
+      if (!flowchart) return
+
+      const nodeEl = e.target.closest('g.node')
+      const edgeEl = e.target.closest('path.flowchart-link')
+      const t = toolRef.current
+
+      if (nodeEl) {
+        const id = nodeIdFromEl(nodeEl)
+        if (!id) return
+        handleNodeClick(id, nodeEl, e)
+      } else if (edgeEl) {
+        const ids = edgeIdsFromEl(edgeEl)
+        if (ids) handleEdgeClick(ids.source, ids.target, e)
+      } else {
+        handleCanvasClick(e)
+      }
+    }
+
+    function onDblClick(e) {
+      if (!flowchart) return
+      const nodeEl = e.target.closest('g.node')
+      if (!nodeEl) return
+      const id = nodeIdFromEl(nodeEl)
+      if (id) startEdit(id)
+    }
+
+    el.addEventListener('click', onClick)
+    el.addEventListener('dblclick', onDblClick)
+    return () => {
+      el.removeEventListener('click', onClick)
+      el.removeEventListener('dblclick', onDblClick)
+    }
+  }, [flowchart])
+
+  // ---------- keyboard for delete + escape ----------
+  useEffect(() => {
+    function onKey(e) {
+      if (!flowchart) return
+      if (e.target?.tagName === 'INPUT' || e.target?.tagName === 'TEXTAREA' || e.target?.isContentEditable) return
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedRef.current) {
+        e.preventDefault()
+        commitCode(deleteNode(codeRef.current, selectedRef.current))
+        setSelectedId(null)
+      } else if (e.key === 'Escape') {
+        setSelectedId(null)
+        setPendingSource(null)
+        setEditingNode(null)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [flowchart])
+
+  // ---------- actions ----------
+  function commitCode(next) {
+    if (next !== codeRef.current) onCodeChange?.(next)
+  }
+
+  function handleNodeClick(id, nodeEl, e) {
+    const t = toolRef.current
+    if (t === 'select') {
+      setSelectedId(id)
+      setPendingSource(null)
+    } else if (t === 'arrow') {
+      if (!pendingSourceRef.current) {
+        setPendingSource(id)
+        setHint(`Source: ${id} — click target node to connect`)
+      } else if (pendingSourceRef.current === id) {
+        setPendingSource(null)
+        setHint('')
+      } else {
+        const src = pendingSourceRef.current
+        commitCode(addEdge(codeRef.current, { source: src, target: id }))
+        setPendingSource(null)
+        setHint('')
+      }
+    } else if (t === 'text') {
+      startEdit(id)
+    } else if (t === 'eraser') {
+      commitCode(deleteNode(codeRef.current, id))
+      if (selectedRef.current === id) setSelectedId(null)
+    }
+  }
+
+  function handleEdgeClick(source, target, e) {
+    const t = toolRef.current
+    if (t === 'eraser') {
+      commitCode(deleteEdge(codeRef.current, source, target))
+    }
+  }
+
+  function handleCanvasClick(e) {
+    const t = toolRef.current
+    if (t === 'select' || t === 'pan' || t === 'arrow' || t === 'eraser' || t === 'text') {
+      // Empty click clears selection / pending edge
+      if (selectedRef.current) setSelectedId(null)
+      if (pendingSourceRef.current) { setPendingSource(null); setHint('') }
+      return
+    }
+    if (['rect', 'diamond', 'circle', 'round'].includes(t)) {
+      const id = nextNodeId(codeRef.current)
+      commitCode(addNode(codeRef.current, { id, shape: t, label: id }))
+      // Auto-select the new node so the next action targets it.
+      setSelectedId(id)
+    }
+  }
+
+  function startEdit(id) {
+    const nodeEl = findNodeEl(id)
+    const stageEl = stageRef.current
+    if (!nodeEl || !stageEl) return
+    const nodeRect = nodeEl.getBoundingClientRect()
+    const stageRect = stageEl.getBoundingClientRect()
+    const z = zoomRef.current || 1
+    // Position the input inside the stage, in stage-local (pre-scale) coordinates,
+    // so it transforms with the rest of the canvas content.
+    const parsed = parseFlowchart(codeRef.current).nodes.get(id)
+    setEditingNode({
+      id,
+      x: (nodeRect.left - stageRect.left) / z,
+      y: (nodeRect.top - stageRect.top) / z,
+      w: nodeRect.width / z,
+      h: nodeRect.height / z,
+      value: parsed?.label ?? id,
+    })
+  }
+
+  function commitEdit() {
+    const ed = editingRef.current
+    if (!ed) return
+    const trimmed = ed.value.trim()
+    if (trimmed && trimmed !== ed.id) {
+      commitCode(renameLabel(codeRef.current, ed.id, trimmed))
+    }
+    setEditingNode(null)
+    lastCommitAt.current = Date.now()
+  }
+
+  // ---------- existing copy/export below ----------
   function zoomIn() { setZoom((z) => Math.min(ZOOM_MAX, parseFloat((z + ZOOM_STEP).toFixed(2)))) }
   function zoomOut() { setZoom((z) => Math.max(ZOOM_MIN, parseFloat((z - ZOOM_STEP).toFixed(2)))) }
 
@@ -297,6 +594,7 @@ export default function Preview({
   }
 
   const disabled = !!error || !code.trim()
+  const cursorClass = `tool-cursor-${tool}`
 
   return (
     <div className="preview-pane">
@@ -308,7 +606,7 @@ export default function Preview({
         )}
         <div className="zoom-controls">
           <button className="zoom-btn" onClick={zoomOut} disabled={zoom <= ZOOM_MIN} title="Zoom out">−</button>
-          <button className="zoom-label" onClick={() => setZoom(1)} title="Reset zoom">{Math.round(zoom * 100)}%</button>
+          <button className="zoom-label" onClick={resetZoom} title="Reset zoom">{Math.round(zoom * 100)}%</button>
           <button className="zoom-btn" onClick={zoomIn} disabled={zoom >= ZOOM_MAX} title="Zoom in">+</button>
           <button className="zoom-btn" onClick={fitToView} disabled={disabled} title="Fit to view">⊡</button>
         </div>
@@ -323,12 +621,54 @@ export default function Preview({
         <button className="toolbar-btn" onClick={exportPng} disabled={disabled}>PNG ↓</button>
         <button className="export-btn" onClick={exportPdf} disabled={disabled}>PDF ↓</button>
       </div>
+
+      {flowchart && !presentationMode && (
+        <CanvasToolbar
+          tool={tool}
+          onToolChange={setTool}
+          hint={
+            pendingSource
+              ? `Source: ${pendingSource} — click target node to connect`
+              : selectedId
+                ? `Selected: ${selectedId} — Delete to remove • double-click to rename`
+                : hint
+          }
+        />
+      )}
+
       {error ? (
         <div className="preview-error"><pre>{error}</pre></div>
       ) : (
-        <div className="preview-scroll" ref={scrollRef} tabIndex={0}>
-          <div className="preview-center">
-            <div ref={containerRef} style={{ zoom }} />
+        <div className={`preview-scroll ${cursorClass}`} ref={scrollRef} tabIndex={0}>
+          <div
+            className="preview-stage"
+            ref={stageRef}
+            style={{
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transformOrigin: '0 0',
+            }}
+          >
+            <div ref={containerRef} />
+            {editingNode && (
+              <input
+                className="node-edit-input"
+                autoFocus
+                value={editingNode.value}
+                onChange={(e) => setEditingNode((ed) => ed && { ...ed, value: e.target.value })}
+                onBlur={commitEdit}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); commitEdit() }
+                  else if (e.key === 'Escape') { e.preventDefault(); setEditingNode(null) }
+                }}
+                style={{
+                  position: 'absolute',
+                  left: editingNode.x,
+                  top: editingNode.y,
+                  width: editingNode.w,
+                  height: editingNode.h,
+                }}
+              />
+            )}
           </div>
         </div>
       )}

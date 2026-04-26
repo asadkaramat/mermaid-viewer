@@ -243,6 +243,7 @@ export default function App() {
             pageTitle={pageTitle}
             config={diagramConfig}
             onError={setErrorLine}
+            onCodeChange={updateCode}
             bgColor={bgColor}
             onBgColorChange={setBgColor}
             presentationMode={presentationMode}
