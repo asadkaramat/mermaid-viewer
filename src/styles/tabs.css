@@ -1,0 +1,98 @@
+.tab-bar {
+  height: var(--tab-h);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-end;
+  padding: 0 8px;
+  gap: 2px;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.tab-bar::-webkit-scrollbar { height: 3px; }
+.tab-bar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  height: 34px;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  color: var(--text-muted);
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+  min-width: 80px;
+  max-width: 220px;
+}
+.tab:hover { background: var(--surface2); color: var(--text); }
+.tab-active { background: var(--bg); border-color: var(--border); color: var(--text); }
+
+.tab-name { flex: 1; overflow: hidden; text-overflow: ellipsis; font-size: 13px; user-select: none; }
+
+.tab-name-input {
+  background: transparent;
+  border: none;
+  outline: 1px solid var(--accent);
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 13px;
+  width: 110px;
+  padding: 1px 4px;
+  flex: 1;
+}
+
+.tab-rename {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 1px 3px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.1s, color 0.1s;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.tab:hover .tab-rename, .tab-active .tab-rename { opacity: 1; }
+.tab-rename:hover { color: var(--accent); background: var(--surface2); }
+
+.tab-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s, color 0.1s;
+}
+.tab:hover .tab-close, .tab-active .tab-close { opacity: 1; }
+.tab-close:hover { color: var(--error-text); background: var(--surface2); }
+
+.tab-add {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 8px;
+  height: 34px;
+  border-radius: 6px;
+  align-self: center;
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+.tab-add:hover { color: var(--accent); background: var(--surface2); }

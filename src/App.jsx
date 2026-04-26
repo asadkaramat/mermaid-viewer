@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocalStorage } from './hooks/useLocalStorage'
+import Header from './components/Header'
+import OptionsBar from './components/OptionsBar'
 import TabBar from './components/TabBar'
 import Editor from './components/Editor'
 import Preview from './components/Preview'
+import EmbedModal from './components/EmbedModal'
+import { detectDiagramType } from './utils/diagrams'
+import { encodeState, decodeHash } from './utils/share'
 import { SAMPLES } from './data/samples'
 
 const DEFAULT_CODE = `flowchart TD
@@ -11,63 +16,11 @@ const DEFAULT_CODE = `flowchart TD
     B -- No --> D[Debug]
     D --> B`
 
-const DIAGRAM_TYPES = [
-  { label: 'Flowchart',  prefix: 'flowchart TD' },
-  { label: 'Sequence',   prefix: 'sequenceDiagram' },
-  { label: 'Class',      prefix: 'classDiagram' },
-  { label: 'State',      prefix: 'stateDiagram-v2' },
-  { label: 'ER',         prefix: 'erDiagram' },
-  { label: 'Gantt',      prefix: 'gantt' },
-  { label: 'Pie',        prefix: 'pie' },
-  { label: 'Mind Map',   prefix: 'mindmap' },
-  { label: 'Timeline',   prefix: 'timeline' },
-  { label: 'Git Graph',  prefix: 'gitGraph' },
-  { label: 'Quadrant',   prefix: 'quadrantChart' },
-  { label: 'XY Chart',   prefix: 'xychart-beta' },
-  { label: 'Kanban',     prefix: 'kanban' },
-  { label: 'Journey',    prefix: 'journey' },
-  { label: 'ZenUML',     prefix: 'zenuml' },
-  { label: 'Block',      prefix: 'block-beta' },
-]
-
-function detectDiagramType(code) {
-  const first = code.trim().split('\n')[0].trim().toLowerCase()
-  if (first.startsWith('flowchart') || first.startsWith('graph ')) return 'Flowchart'
-  if (first.startsWith('sequencediagram')) return 'Sequence'
-  if (first.startsWith('classdiagram')) return 'Class'
-  if (first.startsWith('statediagram')) return 'State'
-  if (first.startsWith('erdiagram')) return 'ER'
-  if (first.startsWith('gantt')) return 'Gantt'
-  if (first.startsWith('pie')) return 'Pie'
-  if (first.startsWith('mindmap')) return 'Mind Map'
-  if (first.startsWith('timeline')) return 'Timeline'
-  if (first.startsWith('gitgraph')) return 'Git Graph'
-  if (first.startsWith('quadrantchart')) return 'Quadrant'
-  if (first.startsWith('xychart')) return 'XY Chart'
-  if (first.startsWith('kanban')) return 'Kanban'
-  if (first.startsWith('journey')) return 'Journey'
-  if (first.startsWith('zenuml')) return 'ZenUML'
-  if (first.startsWith('block-beta')) return 'Block'
-  return null
-}
-
 function makeTab(name) {
   return { id: crypto.randomUUID(), name, code: DEFAULT_CODE }
 }
 
 const INITIAL_TABS = [makeTab('Diagram 1')]
-
-function encodeState(tabs, activeTabId) {
-  return btoa(unescape(encodeURIComponent(JSON.stringify({ tabs, activeTabId }))))
-}
-
-function decodeHash(hash) {
-  try {
-    const data = JSON.parse(decodeURIComponent(escape(atob(hash))))
-    if (Array.isArray(data.tabs) && data.tabs.length) return data
-  } catch {}
-  return null
-}
 
 export default function App() {
   const [tabs, setTabs] = useLocalStorage('mermaid-tabs', INITIAL_TABS)
@@ -78,7 +31,7 @@ export default function App() {
   const [splitDir, setSplitDir] = useLocalStorage('mermaid-split-dir', 'h')
   const [bgColor, setBgColor] = useLocalStorage('mermaid-bg-color', '#ffffff')
   const [splitPercent, setSplitPercent] = useState(50)
-  const [copied, setCopied] = useState(false)
+  const [shareLabel, setShareLabel] = useState('Share')
   const [errorLine, setErrorLine] = useState(null)
   const [presentationMode, setPresentationMode] = useState(false)
   const [embedOpen, setEmbedOpen] = useState(false)
@@ -86,7 +39,6 @@ export default function App() {
   const isDragging = useRef(false)
   const workspaceRef = useRef(null)
   const actionsRef = useRef({})
-  const importWorkspaceRef = useRef(null)
   const splitDirRef = useRef(splitDir)
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0]
@@ -135,8 +87,8 @@ export default function App() {
     const encoded = encodeState(tabs, activeTab.id)
     const url = `${window.location.origin}${window.location.pathname}#${encoded}`
     navigator.clipboard.writeText(url).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      setShareLabel('✓ Copied!')
+      setTimeout(() => setShareLabel('Share'), 2000)
     })
   }
 
@@ -188,11 +140,7 @@ export default function App() {
     reader.readAsText(file)
   }
 
-  actionsRef.current = {
-    addTab,
-    removeActiveTab: () => tabs.length > 1 && removeTab(activeTab.id),
-    formatCode,
-  }
+  actionsRef.current = { addTab, removeActiveTab: () => tabs.length > 1 && removeTab(activeTab.id), formatCode }
 
   useEffect(() => {
     function onKeyDown(e) {
@@ -220,10 +168,6 @@ export default function App() {
 
   function onMouseUp() { isDragging.current = false }
 
-  function updateDiagramConfig(key, value) {
-    setDiagramConfig((prev) => ({ ...prev, [key]: value }))
-  }
-
   const editorStyle = splitDir === 'h'
     ? { width: `${splitPercent}%` }
     : { height: `${splitPercent}%`, width: '100%' }
@@ -234,121 +178,33 @@ export default function App() {
       ? { width: `${100 - splitPercent}%` }
       : { height: `${100 - splitPercent}%`, width: '100%' }
 
-  const currentTypePrefix = DIAGRAM_TYPES.find((t) => t.label === diagramType)?.prefix ?? ''
-
   return (
     <div className="app" onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}>
-      <header className="app-header">
-        <span className="app-logo">⬡</span>
-        <EditableTitle value={pageTitle} onChange={setPageTitle} />
-        <div className="header-actions">
-          <button
-            className="icon-btn"
-            onClick={() => setUiTheme((t) => t === 'light' ? 'dark' : 'light')}
-            title={uiTheme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-          >
-            {uiTheme === 'light' ? '🌙' : '☀️'}
-          </button>
-          <button
-            className="icon-btn"
-            onClick={() => setPresentationMode((p) => !p)}
-            title={presentationMode ? 'Exit presentation mode' : 'Presentation mode'}
-          >
-            {presentationMode ? '⊠' : '⛶'}
-          </button>
-          <button className="icon-btn" onClick={() => setEmbedOpen(true)} title="Get embed code">
-            {'</>'}
-          </button>
-          <button
-            className="icon-btn"
-            onClick={() => importWorkspaceRef.current?.click()}
-            title="Import workspace (.json)"
-          >
-            ⬆
-          </button>
-          <button className="icon-btn" onClick={exportWorkspace} title="Export workspace (.json)">
-            ⬇
-          </button>
-          <input
-            ref={importWorkspaceRef}
-            type="file"
-            accept=".json"
-            style={{ display: 'none' }}
-            onChange={importWorkspace}
-          />
-          <button className="share-btn" onClick={share}>
-            {copied ? '✓ Copied!' : 'Share'}
-          </button>
-        </div>
-      </header>
+      <Header
+        pageTitle={pageTitle}
+        onPageTitleChange={setPageTitle}
+        uiTheme={uiTheme}
+        onUiThemeToggle={() => setUiTheme((t) => t === 'light' ? 'dark' : 'light')}
+        presentationMode={presentationMode}
+        onPresentationToggle={() => setPresentationMode((p) => !p)}
+        onEmbedOpen={() => setEmbedOpen(true)}
+        onImportWorkspace={importWorkspace}
+        onExportWorkspace={exportWorkspace}
+        shareLabel={shareLabel}
+        onShare={share}
+      />
 
-      <div className="options-bar">
-        <label className="options-label">Theme</label>
-        <select
-          className="options-select"
-          value={diagramConfig.theme}
-          onChange={(e) => updateDiagramConfig('theme', e.target.value)}
-        >
-          <option value="default">Default</option>
-          <option value="dark">Dark</option>
-          <option value="forest">Forest</option>
-          <option value="neutral">Neutral</option>
-          <option value="base">Base</option>
-        </select>
-
-        <label className="options-label">Look</label>
-        <select
-          className="options-select"
-          value={diagramConfig.look}
-          onChange={(e) => updateDiagramConfig('look', e.target.value)}
-        >
-          <option value="classic">Classic</option>
-          <option value="handDrawn">Hand Drawn</option>
-        </select>
-
-        <label className="options-label">Type</label>
-        <select
-          className="options-select"
-          value={currentTypePrefix}
-          onChange={(e) => { if (e.target.value) changeDiagramType(e.target.value) }}
-        >
-          {!diagramType && <option value="">Unknown</option>}
-          {DIAGRAM_TYPES.map((t) => (
-            <option key={t.label} value={t.prefix}>{t.label}</option>
-          ))}
-        </select>
-
-        <label className="options-label">Layout</label>
-        <button
-          className="icon-btn layout-btn"
-          onClick={() => setSplitDir((d) => d === 'h' ? 'v' : 'h')}
-          title={splitDir === 'h' ? 'Switch to vertical split' : 'Switch to horizontal split'}
-        >
-          {splitDir === 'h' ? '⬛' : '▬'}
-        </button>
-
-        <div className="options-sep" />
-
-        <button className="toolbar-btn" onClick={formatCode} title="Format code (⌘⇧F)">
-          Format
-        </button>
-
-        <label className="options-label">Sample</label>
-        <select
-          className="options-select"
-          value=""
-          onChange={(e) => { if (e.target.value) { updateCode(e.target.value); e.target.value = '' } }}
-        >
-          <option value="">Load example…</option>
-          {SAMPLES.map((s) => (
-            <option key={s.label} value={s.code}>{s.label}</option>
-          ))}
-        </select>
-
-        <div className="options-hint">
-          <kbd>⌘T</kbd> new &nbsp;·&nbsp; <kbd>⌘⇧W</kbd> close &nbsp;·&nbsp; <kbd>⌘⇧F</kbd> format
-        </div>
-      </div>
+      <OptionsBar
+        diagramConfig={diagramConfig}
+        onDiagramConfigChange={(key, val) => setDiagramConfig((prev) => ({ ...prev, [key]: val }))}
+        diagramType={diagramType}
+        onDiagramTypeChange={changeDiagramType}
+        splitDir={splitDir}
+        onSplitDirToggle={() => setSplitDir((d) => d === 'h' ? 'v' : 'h')}
+        onFormat={formatCode}
+        onLoadSample={updateCode}
+        samples={SAMPLES}
+      />
 
       <TabBar
         tabs={tabs}
@@ -396,88 +252,8 @@ export default function App() {
       </div>
 
       {embedOpen && (
-        <EmbedModal
-          tabs={tabs}
-          activeTab={activeTab}
-          onClose={() => setEmbedOpen(false)}
-        />
+        <EmbedModal tabs={tabs} activeTab={activeTab} onClose={() => setEmbedOpen(false)} />
       )}
     </div>
-  )
-}
-
-function EmbedModal({ tabs, activeTab, onClose }) {
-  const encoded = encodeState(tabs, activeTab.id)
-  const url = `${window.location.origin}${window.location.pathname}#${encoded}`
-  const iframeCode = `<iframe\n  src="${url}"\n  width="800"\n  height="600"\n  frameborder="0"\n  allowfullscreen\n></iframe>`
-  const [copied, setCopied] = useState('')
-
-  function copy(text, key) {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(key)
-      setTimeout(() => setCopied(''), 2000)
-    })
-  }
-
-  return (
-    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
-        <div className="modal-title">Embed Diagram</div>
-
-        <div className="modal-label">HTML iframe</div>
-        <pre className="modal-code">{iframeCode}</pre>
-        <div className="modal-row" style={{ marginBottom: 16 }}>
-          <button className="toolbar-btn" onClick={() => copy(iframeCode, 'iframe')}>
-            {copied === 'iframe' ? '✓ Copied!' : 'Copy iframe'}
-          </button>
-        </div>
-
-        <div className="modal-label">Direct link</div>
-        <pre className="modal-code modal-code-url">{url}</pre>
-        <div className="modal-row">
-          <button className="toolbar-btn" onClick={() => copy(url, 'url')}>
-            {copied === 'url' ? '✓ Copied!' : 'Copy link'}
-          </button>
-          <button className="export-btn" onClick={onClose}>Close</button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function EditableTitle({ value, onChange }) {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(value)
-  const inputRef = useRef(null)
-
-  useEffect(() => {
-    if (editing) { inputRef.current?.focus(); inputRef.current?.select() }
-  }, [editing])
-
-  function commit() { onChange(draft.trim() || value); setEditing(false) }
-
-  function onKeyDown(e) {
-    if (e.key === 'Enter') commit()
-    if (e.key === 'Escape') setEditing(false)
-  }
-
-  if (editing) {
-    return (
-      <input
-        ref={inputRef}
-        className="page-title-input"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={onKeyDown}
-      />
-    )
-  }
-
-  return (
-    <span className="page-title" onClick={() => { setDraft(value); setEditing(true) }} title="Click to rename">
-      {value}
-      <span className="page-title-edit-icon">✎</span>
-    </span>
   )
 }

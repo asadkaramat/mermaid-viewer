@@ -1,0 +1,45 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #ffffff;
+  --surface: #f5f5f7;
+  --surface2: #e8e8ed;
+  --border: #d1d1d6;
+  --accent: #6153d3;
+  --accent-hover: #7c6af7;
+  --text: #1c1c1e;
+  --text-muted: #6e6e73;
+  --error-bg: #fff1f0;
+  --error-text: #c0392b;
+  --error-line: #fff0f0;
+  --dot-color: #c0c0c8;
+  --tab-h: 42px;
+  --header-h: 48px;
+  --options-h: 38px;
+  --handle-w: 5px;
+}
+
+[data-theme="dark"] {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --surface2: #22263a;
+  --border: #2e3350;
+  --accent: #7c6af7;
+  --accent-hover: #9585f9;
+  --text: #e2e4ef;
+  --text-muted: #7a7f9a;
+  --error-bg: #2a1520;
+  --error-text: #f87171;
+  --error-line: #2a1520;
+  --dot-color: #2a2d3e;
+}
+
+html, body, #root { height: 100%; width: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  overflow: hidden;
+}

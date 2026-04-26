@@ -8,14 +8,22 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          'react-vendor': ['react', 'react-dom'],
-          'mermaid-vendor': ['mermaid'],
-          'codemirror-vendor': [
+          'react':      ['react', 'react-dom'],
+          'mermaid':    ['mermaid'],
+          'codemirror': [
             '@uiw/react-codemirror',
+            '@codemirror/state',
+            '@codemirror/view',
+            '@codemirror/commands',
+            '@codemirror/language',
             '@codemirror/theme-one-dark',
             'codemirror-lang-mermaid',
           ],
         },
+        // Stable filenames for better long-term caching
+        entryFileNames: 'assets/[name]-[hash].js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash].[ext]',
       },
     },
   },
